@@ -15,22 +15,24 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Download Ape Tag project
+      - name: Checkout Ape Tag
         uses: actions/checkout@v5
 
-      - name: Install Java 17
+      - name: Install Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
+      - name: Install Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
-      - name: Install Android build packages
+      - name: Install Android packages
+        shell: bash
         run: |
+          set -e
           sdkmanager --install \
             "platforms;android-34" \
             "build-tools;34.0.0"
@@ -45,15 +47,17 @@ jobs:
           curl -fL -o "$RUNNER_TEMP/godot/godot.zip" \
             https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
 
-          unzip -q "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          unzip -q "$RUNNER_TEMP/godot/godot.zip" \
+            -d "$RUNNER_TEMP/godot"
 
-          GODOT_BIN=$(find "$RUNNER_TEMP/godot" -maxdepth 1 -type f -name 'Godot_v4.3*' | head -n 1)
+          GODOT_BIN=$(find "$RUNNER_TEMP/godot" \
+            -maxdepth 1 -type f -name 'Godot_v4.3*' | head -n 1)
 
           chmod +x "$GODOT_BIN"
 
           echo "GODOT_BIN=$GODOT_BIN" >> "$GITHUB_ENV"
 
-      - name: Install Godot export templates
+      - name: Install Godot Android templates
         shell: bash
         run: |
           set -e
@@ -71,7 +75,7 @@ jobs:
 
           cp -a "$RUNNER_TEMP/templates/templates/." "$TEMPLATE_DIR/"
 
-      - name: Configure Android signing and Godot
+      - name: Configure Android
         shell: bash
         run: |
           set -e
@@ -100,32 +104,70 @@ jobs:
           export/android/debug_keystore_pass = "android"
           EOF
 
-      - name: Import Ape Tag project
+      - name: Check project and export preset
         shell: bash
         run: |
           set -e
-          "$GODOT_BIN" --headless --editor --path . --quit
+
+          echo "Checking project.godot..."
+          test -f project.godot
+
+          echo "Checking export_presets.cfg..."
+          test -f export_presets.cfg
+
+          echo "Available export presets:"
+          cat export_presets.cfg
+
+          echo "Checking Godot templates..."
+          ls -la "$HOME/.local/share/godot/export_templates/4.3.stable"
+
+      - name: Import Godot project
+        shell: bash
+        run: |
+          set -e
+
+          "$GODOT_BIN" \
+            --headless \
+            --editor \
+            --path . \
+            --quit \
+            --verbose
 
       - name: Export Android APK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           mkdir -p build
 
-          "$GODOT_BIN" --headless --path . \
-            --export-debug "Android (phone APK)" \
-            build/ApeTag.apk
+          echo "Starting Android export..."
+
+          "$GODOT_BIN" \
+            --headless \
+            --verbose \
+            --path . \
+            --export-debug \
+            "Android (phone APK)" \
+            build/ApeTag.apk 2>&1 | tee build/export.log
 
           test -s build/ApeTag.apk
 
-          echo "APK successfully created!"
+          echo "APK export successful!"
 
-      - name: Upload downloadable APK
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ApeTag-Android-APK
           path: build/ApeTag.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ApeTag-Build-Logs
+          path: build/export.log
+          if-no-files-found: ignore
           
